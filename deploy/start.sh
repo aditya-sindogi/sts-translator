@@ -18,6 +18,10 @@ running() { [ -f "run/$1.pid" ] && kill -0 "$(cat "run/$1.pid")" 2>/dev/null; }
 
 start_vllm() {
   if running vllm; then echo "vLLM already running (pid $(cat run/vllm.pid))"; return; fi
+  if pgrep -u "$USER" -f "vllm serve" >/dev/null; then
+    echo "A 'vllm serve' process not started by this script is running (it holds GPU memory):"
+    pgrep -u "$USER" -af "vllm serve"; echo "Stop it first: pkill -u $USER -f 'vllm serve'"; exit 1
+  fi
   echo "starting vLLM: $VLLM_MODEL on 127.0.0.1:$VLLM_PORT"
   # setsid: own process group, so stop.sh can stop vLLM and the app independently.
   setsid nohup "$VLLM_VENV/bin/vllm" serve "$VLLM_MODEL" \
@@ -31,7 +35,11 @@ start_vllm() {
   echo -n "waiting for vLLM to load (first start ~2-5 min)"
   for _ in $(seq 1 120); do
     if curl -sf "http://127.0.0.1:$VLLM_PORT/health" >/dev/null; then echo " ready"; return; fi
-    running vllm || { echo; echo "vLLM exited; see logs/vllm.log"; tail -20 logs/vllm.log; exit 1; }
+    running vllm || {
+      echo; echo "vLLM exited. Root cause from logs/vllm.log:"
+      grep -i -E "error|out of memory|kv cache|max_model_len" logs/vllm.log | grep -v -i warning | head -15
+      exit 1
+    }
     echo -n "."; sleep 5
   done
   echo; echo "vLLM not ready after 10 min; see logs/vllm.log"; exit 1
