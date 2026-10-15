@@ -29,37 +29,25 @@ Sample PDFs are in `samples/`: `mock_remote_work_policy.pdf` (4 pages) and `samp
 
 ## Deploy on EC2 (GPU)
 
-On EC2, Gemma 4 12B runs in **vLLM on the instance's GPU**, not in Ollama, and Parakeet runs on the GPU through NeMo. No sudo or Docker is needed.
-
-**Target instance:** L40S (46 GB), Ubuntu 22.04, with `uv` and Python 3.12 installed. Setup needs about 45 GB of free disk.
+The EC2 runs the same stack as the laptop: **Ollama serves `gemma4:12b` on the GPU**. Gemma loads onto the GPU when a request arrives and unloads after 5 idle minutes. Parakeet speech-to-text also uses the GPU, and falls back to Moonshine on the CPU if it can't load. No sudo or Docker is needed.
 
 ```bash
-# on the EC2
+# on the EC2 (one time)
 git clone <your-repo-url> sts-up && cd sts-up
-bash deploy/setup.sh                       # one time: envs, vLLM nightly, model downloads (~20-40 min)
-bash deploy/start.sh                       # starts vLLM (Gemma) and then the app; logs in logs/
-uv run python -m scripts.check_stack       # PASS/FAIL for LLM, thinking off, Parakeet, LID, TTS
+bash deploy/setup.sh       # installs uv + Ollama into ~/.local, app deps, pulls gemma4:12b and speech models
+# every time
+bash deploy/start.sh       # starts Ollama (if needed) and the app; logs in logs/
+bash deploy/stop.sh        # stops both
+uv run python -m scripts.check_stack   # optional: PASS/FAIL per component
 ```
 
 ```bash
 # on your laptop
 ssh -N -L 7860:localhost:7860 l40-aws      # keep this running
-open http://localhost:7860                 # mic works because the page is on localhost
+open http://localhost:7860
 ```
 
-What `setup.sh` does:
-- Writes `.env` from [deploy/ec2.env.example](deploy/ec2.env.example) and generates a vLLM API key.
-- Runs `uv sync --extra nemo`.
-- Installs a separate vLLM nightly environment in `~/.venvs/vllm`. Gemma 4 12B isn't in a stable vLLM release yet.
-- Pre-downloads all the models.
-
-How it runs:
-- vLLM listens on `127.0.0.1:8000` and uses 70% of GPU memory, leaving room for Parakeet.
-- The app listens on `127.0.0.1:7860`, so it's only reachable through the SSH tunnel.
-- `STS_LLM_REQUIRED=true` makes the app refuse to start if vLLM isn't up. It never silently falls back.
-- Stop everything with `bash deploy/stop.sh` (or `stop.sh app` / `stop.sh vllm`).
-
-**WebRTC audio:** the page loads through the tunnel, but the audio itself goes over UDP straight to the instance's public IP, which STUN lets it advertise. This usually works with no AWS changes. If the page connects but audio never arrives, add a security-group inbound rule: **Custom UDP, ports 1024–65535, source = your IP/32**.
+**If the page connects but the bot never hears you:** WebRTC audio goes over UDP straight to the instance. Add a security-group inbound rule: **Custom UDP, 1024–65535, source = your IP/32**.
 
 ## Testing without a browser
 

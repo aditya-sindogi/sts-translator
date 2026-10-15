@@ -36,6 +36,7 @@ from app.lid.speech_lid import LanguageIDProcessor
 from app.session.assistant import DocumentAssistant
 from app.stt.engines import ParakeetEngine
 from app.stt.indic_zipformer import IndicZipformerEngine
+from app.stt.parakeet import try_get_backend
 from app.stt.routed import RoutedSTTService
 from app.tts.indic_parler import IndicParlerTTSService
 
@@ -44,7 +45,10 @@ TTSSelector = Callable[[str], FrameProcessor | None]
 
 def build_stt():
     settings = get_settings()
-    engines = [ParakeetEngine()]
+    parakeet = try_get_backend()
+    if parakeet is None:
+        return MoonshineSTTService()
+    engines = [ParakeetEngine(parakeet)]
     if settings.indic_asr_url:
         engines.append(IndicZipformerEngine(settings.indic_asr_url, settings.indic_asr_languages))
     services = [RoutedSTTService(engines=engines, default_language="en")]

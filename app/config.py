@@ -24,14 +24,12 @@ class Settings(BaseSettings):
     llm_base_url: str = "http://localhost:11434/v1"
     llm_api_key: str = "ollama"
     llm_model: str = "gemma4:12b"
-    # Refuse to start when the LLM is unreachable (set true on EC2 so a missing vLLM
+    # Refuse to start when the LLM is unreachable (set true on EC2 so a missing Ollama
     # fails loudly instead of the app limping along).
     llm_required: bool = False
     llm_timeout_secs: float = 120.0
     llm_max_retries: int = 2
     # Gemma 4 "thinks" by default on Ollama, which costs ~10x tokens and latency here.
-    # Ollama: {"reasoning_effort": "none"}.
-    # vLLM:   {"chat_template_kwargs": {"enable_thinking": false}}  (off by default, made explicit)
     llm_extra_body: dict = {"reasoning_effort": "none"}
 
     # --- STT ---

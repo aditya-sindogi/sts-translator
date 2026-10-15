@@ -25,7 +25,7 @@ from app.config import ROOT, get_settings
 from app.documents.store import get_store
 from app.lid.speech_lid import get_identifier
 from app.llm.client import LLMUnavailable, get_llm
-from app.stt.parakeet import get_backend
+from app.stt.parakeet import try_get_backend
 
 _sessions: set[asyncio.Task] = set()
 
@@ -46,7 +46,7 @@ async def lifespan(app: FastAPI):
     logger.info("warming up models (first run downloads them)…")
     await asyncio.gather(
         asyncio.to_thread(get_identifier),
-        asyncio.to_thread(get_backend),
+        asyncio.to_thread(try_get_backend),
         asyncio.to_thread(_prefetch_session_models),
     )
     s = get_settings()
