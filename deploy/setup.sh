@@ -41,13 +41,25 @@ VLLM_VENV=${VLLM_VENV/#\$HOME/$HOME}
 say "App environment"
 uv sync --extra nemo
 
-say "vLLM nightly environment at $VLLM_VENV"
-uv venv --python 3.12 "$VLLM_VENV"
+# CUDA 13 builds: the driver (580) supports CUDA 13, it is vLLM's default for Gemma 4, and
+# PyPI's torchcodec is a CUDA 13 build. Mixing cu129 torch with it fails to load
+# libtorchcodec_*.so (libcudart.so.13 not found).
+VLLM_CUDA=${VLLM_CUDA:-cu130}
+say "vLLM nightly environment ($VLLM_CUDA) at $VLLM_VENV"
+uv venv --clear --python 3.12 "$VLLM_VENV"
 VIRTUAL_ENV="$VLLM_VENV" uv pip install -U vllm --pre \
-  --extra-index-url https://wheels.vllm.ai/nightly/cu129 \
-  --extra-index-url https://download.pytorch.org/whl/cu129 \
+  --extra-index-url "https://wheels.vllm.ai/nightly/$VLLM_CUDA" \
+  --extra-index-url "https://download.pytorch.org/whl/$VLLM_CUDA" \
   --index-strategy unsafe-best-match
-"$VLLM_VENV/bin/python" -c "import vllm; print('vllm', vllm.__version__)"
+"$VLLM_VENV/bin/python" - <<'PY'
+import torch, vllm
+print("vllm", vllm.__version__, "| torch", torch.__version__, "CUDA", torch.version.cuda, "| GPU ok:", torch.cuda.is_available())
+try:
+    import torchcodec  # noqa: F401
+    print("torchcodec ok")
+except ImportError:
+    print("torchcodec not installed (fine for text-only use)")
+PY
 
 say "Download Gemma ($VLLM_MODEL)"
 "$VLLM_VENV/bin/python" -c "from huggingface_hub import snapshot_download; print(snapshot_download('$VLLM_MODEL'))"
