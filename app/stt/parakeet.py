@@ -59,6 +59,26 @@ class NeMoParakeetBackend(ParakeetBackend):
         self._model = nemo_asr.models.ASRModel.from_pretrained(model_name=model_id)
         self._model.eval()
         self._lock = threading.Lock()
+        self._warm_up()
+
+    def _warm_up(self):
+        """Run one tiny inference now, so GPU library problems surface at startup.
+
+        A broken cuDNN install (typically a stray LD_LIBRARY_PATH mixing CUDA versions)
+        fails in the first convolution. Parakeet still runs on the GPU without cuDNN,
+        a little slower, so fall back to that instead of failing every request.
+        """
+        import torch
+
+        silence = np.zeros(16000, dtype=np.float32)
+        try:
+            self.transcribe(silence)
+        except RuntimeError as e:
+            if "CUDNN" not in str(e).upper():
+                raise
+            logger.warning(f"cuDNN failed ({e}); disabling cuDNN for Parakeet. Check LD_LIBRARY_PATH.")
+            torch.backends.cudnn.enabled = False
+            self.transcribe(silence)
 
     def transcribe(self, audio_f32_16k: np.ndarray) -> str:
         with self._lock:

@@ -11,7 +11,17 @@ REPO=$(pwd)
 say() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 
 say "Checks"
-command -v uv >/dev/null || { echo "uv not found: curl -LsSf https://astral.sh/uv/install.sh | sh"; exit 1; }
+export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
+# PyTorch and vLLM wheels bundle their own CUDA/cuDNN. A system LD_LIBRARY_PATH (e.g. from
+# another project's CUDA 12.1 activate.sh) makes them load mismatched libraries and fail
+# with CUDNN_STATUS_SUBLIBRARY_LOADING_FAILED, so it is cleared for everything we start.
+unset LD_LIBRARY_PATH
+if ! command -v uv >/dev/null; then
+  echo "uv not found; installing it for this user (no sudo needed)"
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  command -v uv >/dev/null || { echo "uv install failed; see https://docs.astral.sh/uv/"; exit 1; }
+fi
+uv --version
 nvidia-smi --query-gpu=name,memory.total,memory.used --format=csv,noheader
 FREE_GB=$(df -BG --output=avail "$HOME" | tail -1 | tr -dc '0-9')
 echo "free disk: ${FREE_GB} GB"

@@ -5,6 +5,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 REPO=$(pwd)
 mkdir -p logs run
+export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
+# PyTorch and vLLM wheels bundle their own CUDA/cuDNN. A system LD_LIBRARY_PATH (e.g. from
+# another project's CUDA 12.1 activate.sh) makes them load mismatched libraries and fail
+# with CUDNN_STATUS_SUBLIBRARY_LOADING_FAILED, so it is cleared for everything we start.
+unset LD_LIBRARY_PATH
 set -a; source .env; set +a
 VLLM_VENV=${VLLM_VENV/#\$HOME/$HOME}
 WHAT=${1:-all}
