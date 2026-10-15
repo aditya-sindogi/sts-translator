@@ -1,0 +1,17 @@
+# Python / uv
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Secrets and local config
+.env
+
+# Downloaded models and runtime data (re-created by deploy/setup.sh / first run)
+models/
+data/
+voice-models/
+logs/
+run/
+
+.DS_Store

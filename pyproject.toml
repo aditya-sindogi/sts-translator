@@ -1,0 +1,38 @@
+[project]
+name = "sts-up"
+version = "0.1.0"
+description = "Speech + PDF translation assistant: VAD + LID -> STT (Parakeet) -> LLM (Gemma 4) -> TTS (Kokoro) on Pipecat"
+authors = [
+    { name = "aditya-sindogi", email = "aditya.s@avataar.ai" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.143.1",
+    "lingua-language-detector>=2.2.0",
+    "parakeet-mlx==0.5.3 ; sys_platform == 'darwin'",
+    "pipecat-ai[kokoro,local-smart-turn,moonshine,openai,runner,silero,webrtc]==1.12.0",
+    "pydantic-settings>=2.16.0",
+    "pypdfium2>=5.14.0",
+    "python-multipart>=0.0.32",
+    "speechbrain>=1.1.2",
+    "torch>=2.14.1",
+    "torchaudio>=2.11.0",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[project.optional-dependencies]
+# Linux + NVIDIA GPU production STT backend (Parakeet via NeMo).
+nemo = ["nemo_toolkit[asr]"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

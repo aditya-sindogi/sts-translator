@@ -1,0 +1,91 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+2 0 obj
+<< /Length 580 >>
+stream
+BT
+/F1 11 Tf
+14 TL
+72 720 Td
+(Q3 2026 Operating Plan) Tj T*
+T*
+(This document summarizes the operating plan for the third quarter of 2026.) Tj T*
+(The total budget is $4.2M, an increase of 12% over Q2. Spending is split) Tj T*
+(between hiring \(55%\), infrastructure \(30%\) and training \(15%\).) Tj T*
+T*
+(Hiring) Tj T*
+T*
+(We will hire 18 engineers and 4 designers across the Pune and Bengaluru) Tj T*
+(offices. Interviews start on 15 July 2026 and offers close by 30 September.) Tj T*
+ET
+BT
+/F1 9 Tf
+72 40 Td
+(Internal - Avataar Planning) Tj
+ET
+BT
+/F1 9 Tf
+520 40 Td
+(1) Tj
+ET
+endstream
+endobj
+3 0 obj
+<< /Type /Page /Parent 6 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 1 0 R >> >> /Contents 2 0 R >>
+endobj
+4 0 obj
+<< /Length 552 >>
+stream
+BT
+/F1 11 Tf
+14 TL
+72 720 Td
+(Infrastructure) Tj T*
+T*
+(The data center expansion in Pune adds 240 GPU nodes. Delivery is planned) Tj T*
+(for August, with a fallback vendor if the primary order slips by more than) Tj T*
+(three weeks. Power and cooling upgrades are budgeted at $610,000.) Tj T*
+T*
+(Risks) Tj T*
+T*
+(The main risks are hardware delivery delays, hiring competition for senior) Tj T*
+(engineers, and currency movement on imported equipment.) Tj T*
+ET
+BT
+/F1 9 Tf
+72 40 Td
+(Internal - Avataar Planning) Tj
+ET
+BT
+/F1 9 Tf
+520 40 Td
+(2) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 6 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 1 0 R >> >> /Contents 4 0 R >>
+endobj
+6 0 obj
+<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>
+endobj
+7 0 obj
+<< /Type /Catalog /Pages 6 0 R >>
+endobj
+xref
+0 8
+0000000000 65535 f 
+0000000009 00000 n 
+0000000079 00000 n 
+0000000710 00000 n 
+0000000836 00000 n 
+0000001439 00000 n 
+0000001565 00000 n 
+0000001628 00000 n 
+trailer
+<< /Size 8 /Root 7 0 R >>
+startxref
+1677
+%%EOF

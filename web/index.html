@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voice PDF Translator</title>
+<style>
+  :root { --bg:#f7f7f5; --card:#fff; --ink:#1d1d1f; --muted:#6b6b70; --line:#e3e3e0; --accent:#2b59c3; --ok:#1f7a4d; --warn:#a15c00; --err:#b3261e; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#151517; --card:#1e1e21; --ink:#ececee; --muted:#9a9aa2; --line:#2e2e33; --accent:#7aa2ff; --ok:#5cc28e; --warn:#e0a54a; --err:#ff8a80; } }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.5 system-ui, -apple-system, sans-serif; background:var(--bg); color:var(--ink); }
+  main { max-width:1100px; margin:0 auto; padding:24px 16px; display:grid; gap:16px; grid-template-columns: 1fr 1fr; }
+  header { grid-column:1/-1; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  .sub { color:var(--muted); margin:0; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; min-width:0; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin:0 0 12px; }
+  button { font:inherit; padding:8px 14px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--ink); cursor:pointer; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button:disabled { opacity:.5; cursor:default; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .pill { font-size:12px; padding:2px 8px; border-radius:99px; border:1px solid var(--line); color:var(--muted); }
+  .pill.ok { color:var(--ok); border-color:var(--ok); } .pill.warn { color:var(--warn); border-color:var(--warn); } .pill.err { color:var(--err); border-color:var(--err); }
+  #log { height:320px; overflow:auto; font-size:14px; display:flex; flex-direction:column; gap:6px; }
+  .msg { padding:6px 10px; border-radius:8px; background:var(--bg); }
+  .msg.you { border-left:3px solid var(--accent); } .msg.bot { border-left:3px solid var(--ok); } .msg.sys { color:var(--muted); font-size:13px; }
+  .full { grid-column:1/-1; }
+  #summary { font-size:16px; margin:0 0 8px; }
+  #meta { color:var(--muted); font-size:13px; margin-bottom:8px; }
+  #text { white-space:pre-wrap; max-height:420px; overflow:auto; background:var(--bg); padding:12px; border-radius:8px; font-size:14px; }
+  progress { width:100%; }
+  @media (max-width: 760px) { main { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Voice PDF Translator</h1>
+    <p class="sub">Upload a PDF, connect, then say: “translate this document into English”.</p>
+  </header>
+
+  <section>
+    <h2>1 · Document</h2>
+    <div class="row">
+      <input type="file" id="file" accept="application/pdf,.pdf">
+      <span id="docStatus" class="pill">no document</span>
+    </div>
+    <div id="docInfo" class="sub" style="margin-top:8px"></div>
+  </section>
+
+  <section>
+    <h2>2 · Voice</h2>
+    <div class="row">
+      <button id="connect" class="primary">Connect microphone</button>
+      <button id="disconnect" disabled>Disconnect</button>
+      <span id="connStatus" class="pill">disconnected</span>
+      <span id="lang" class="pill" title="Spoken language detected on your last utterance">lang: –</span>
+    </div>
+    <progress id="progress" value="0" max="1" hidden></progress>
+  </section>
+
+  <section class="full">
+    <h2>Conversation</h2>
+    <div id="log"></div>
+  </section>
+
+  <section class="full" id="resultCard" hidden>
+    <h2>Result</h2>
+    <p id="summary"></p>
+    <div id="meta"></div>
+    <div class="row" style="margin-bottom:8px"><button id="download">Download .txt</button></div>
+    <div id="text"></div>
+  </section>
+</main>
+<audio id="botAudio" autoplay></audio>
+
+<script>
+const sessionId = crypto.randomUUID();
+const $ = (id) => document.getElementById(id);
+let pc = null, dc = null, pingTimer = null, lastResultUrl = null;
+
+function log(cls, text) {
+  const el = document.createElement('div');
+  el.className = `msg ${cls}`;
+  el.textContent = text;
+  $('log').appendChild(el);
+  $('log').scrollTop = $('log').scrollHeight;
+}
+function pill(id, text, cls = '') { const p = $(id); p.textContent = text; p.className = `pill ${cls}`; }
+
+// ---------- Document upload ----------
+$('file').addEventListener('change', async () => {
+  const f = $('file').files[0];
+  if (!f) return;
+  pill('docStatus', 'uploading…');
+  const form = new FormData();
+  form.append('session_id', sessionId);
+  form.append('file', f);
+  let doc = await (await fetch('/api/documents', { method: 'POST', body: form })).json();
+  while (doc.status === 'processing') {
+    pill('docStatus', 'processing…');
+    await new Promise(r => setTimeout(r, 500));
+    doc = await (await fetch(`/api/documents/${doc.doc_id}`)).json();
+  }
+  if (doc.status === 'ready') {
+    pill('docStatus', 'ready', 'ok');
+    $('docInfo').textContent = `${doc.filename}: ${doc.pages} pages, ${doc.chars.toLocaleString()} characters, language ${doc.language ?? 'unknown'}` +
+      (doc.warnings.length ? ` · ⚠ ${doc.warnings.join(' ')}` : '');
+  } else {
+    pill('docStatus', 'rejected', 'err');
+    $('docInfo').textContent = doc.error;
+  }
+});
+
+// ---------- WebRTC (Pipecat SmallWebRTC) ----------
+$('connect').addEventListener('click', connect);
+$('disconnect').addEventListener('click', disconnect);
+
+async function connect() {
+  $('connect').disabled = true;
+  pill('connStatus', 'connecting…');
+  try {
+    const mic = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
+    const { ice_servers } = await (await fetch('/api/config')).json();
+    pc = new RTCPeerConnection({ iceServers: ice_servers });
+    // Pipecat expects transceivers in order: audio, camera video (unused here).
+    pc.addTransceiver(mic.getAudioTracks()[0], { direction: 'sendrecv' });
+    pc.addTransceiver('video', { direction: 'sendrecv' });
+    pc.ontrack = (e) => { if (e.track.kind === 'audio') $('botAudio').srcObject = new MediaStream([e.track]); };
+    pc.onconnectionstatechange = () => {
+      const s = pc?.connectionState;
+      pill('connStatus', s, s === 'connected' ? 'ok' : (s === 'failed' ? 'err' : ''));
+      if (s === 'failed' || s === 'closed') disconnect();
+    };
+
+    dc = pc.createDataChannel('chat', { ordered: true });
+    dc.onopen = () => {
+      // RTVI handshake: tells Pipecat the client is ready to receive events.
+      dc.send(JSON.stringify({ id: crypto.randomUUID(), label: 'rtvi-ai', type: 'client-ready',
+        data: { version: '2.1.0', about: { library: 'sts-up-web', library_version: '0.1.0' } } }));
+      pingTimer = setInterval(() => dc?.readyState === 'open' && dc.send('ping: ' + Date.now()), 1000);
+    };
+    dc.onmessage = (e) => { try { onRtvi(JSON.parse(e.data)); } catch {} };
+
+    await pc.setLocalDescription(await pc.createOffer());
+    await new Promise((resolve) => {
+      if (pc.iceGatheringState === 'complete') return resolve();
+      pc.addEventListener('icegatheringstatechange', () => pc.iceGatheringState === 'complete' && resolve());
+      setTimeout(resolve, 3000);  // STUN gathering can take a moment
+    });
+    const res = await fetch('/api/offer', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sdp: pc.localDescription.sdp, type: pc.localDescription.type, request_data: { session_id: sessionId } }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    await pc.setRemoteDescription(await res.json());
+    $('disconnect').disabled = false;
+    log('sys', 'Connected. Speak a command.');
+  } catch (err) {
+    log('sys', `Connection failed: ${err.message || err}`);
+    disconnect();
+  }
+}
+
+function disconnect() {
+  clearInterval(pingTimer);
+  pc?.getSenders().forEach(s => s.track?.stop());
+  dc?.close(); pc?.close();
+  pc = dc = null;
+  pill('connStatus', 'disconnected');
+  $('connect').disabled = false;
+  $('disconnect').disabled = true;
+}
+
+// ---------- Messages from the bot ----------
+function onRtvi(m) {
+  if (m.label !== 'rtvi-ai') return;
+  switch (m.type) {
+    case 'user-transcription':
+      if (m.data.final) log('you', m.data.text);
+      break;
+    case 'server-message':
+      onServerMessage(m.data);
+      break;
+    case 'error':
+      log('sys', `Error: ${m.data?.error ?? JSON.stringify(m.data)}`);
+      break;
+  }
+}
+
+function onServerMessage(d) {
+  switch (d.type) {
+    case 'language': {
+      const ok = d.text === 'en';
+      pill('lang', `lang: ${d.text ?? '?'} ${d.text ? Math.round(d.confidence * 100) + '%' : '(too short)'}`, d.text ? (ok ? 'ok' : 'warn') : '');
+      break;
+    }
+    case 'command':
+      log('sys', `command: ${d.text}${d.target_language ? ' → ' + d.target_language : ''}`);
+      break;
+    case 'assistant':
+      log('bot', d.text);
+      if (d.kind === 'ack') { $('progress').hidden = false; $('progress').value = 0; }
+      break;
+    case 'progress':
+      $('progress').max = d.total; $('progress').value = d.done;
+      break;
+    case 'cancelled':
+      $('progress').hidden = true;
+      break;
+    case 'result':
+      $('progress').hidden = true;
+      showResult(d);
+      break;
+  }
+}
+
+async function showResult(d) {
+  log('bot', d.summary_text);
+  lastResultUrl = d.result_url;
+  $('resultCard').hidden = false;
+  $('summary').textContent = d.summary_text;
+  $('meta').textContent = `${d.filename} · ${d.pages} pages · ${d.source_language} → ${d.target_language} · ${d.chunks} chunks · ${d.elapsed_secs}s` +
+    (d.warnings.length ? ` · ⚠ ${d.warnings.join(' ')}` : '');
+  $('text').textContent = d.truncated ? (await (await fetch(`${d.result_url}?format=txt`)).text()) : d.translated_preview;
+}
+
+$('download').addEventListener('click', () => { if (lastResultUrl) window.open(`${lastResultUrl}?format=txt`); });
+</script>
+</body>
+</html>
