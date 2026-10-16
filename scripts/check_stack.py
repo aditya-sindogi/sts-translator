@@ -3,8 +3,8 @@
     uv run python -m scripts.check_stack                # full check (LLM must be running)
     uv run python -m scripts.check_stack --models-only  # just download/load the local models
 
-Checks: LLM endpoint (model served, thinking off, JSON output), Parakeet STT on a spoken
-sample, spoken language ID, Kokoro TTS, and the optional Indic ASR/TTS servers.
+Checks: LLM endpoint (model served, thinking off, JSON output), every STT engine configured
+in STS_STT on a spoken sample, spoken language ID, Kokoro, and remote TTS if configured.
 """
 
 import argparse
@@ -68,42 +68,42 @@ async def check_llm():
 
 
 async def check_stt_lid(pcm: bytes):
+    """Every configured STT engine transcribes the spoken sample; LID recognises English."""
     from app.lid.speech_lid import get_identifier
-    from app.stt.engines import ParakeetEngine
+    from app.stt.providers import build_engines
 
     started = time.perf_counter()
-    engine = await asyncio.to_thread(ParakeetEngine)
-    record("Parakeet loaded", True, f"{engine.name} in {time.perf_counter() - started:.1f}s")
-    await engine.transcribe(pcm, "en")  # warm-up
-    started = time.perf_counter()
-    text = await engine.transcribe(pcm, "en")
-    ok = "translate" in text.lower() and "english" in text.lower()
-    record("Parakeet transcription", ok, f"{text!r} in {time.perf_counter() - started:.2f}s")
+    routes = await asyncio.to_thread(build_engines)
+    record("STT engines loaded", bool(routes), f"{ {lang: e.name for lang, e in routes.items()} } in {time.perf_counter() - started:.1f}s")
+    for lang, engine in routes.items():
+        try:
+            await engine.transcribe(pcm, lang)  # warm-up
+            started = time.perf_counter()
+            text = await engine.transcribe(pcm, lang)
+        except Exception as e:
+            record(f"STT {engine.name} [{lang}]", False, str(e))
+            continue
+        # The sample is English; other languages only need to respond.
+        ok = ("translate" in text.lower() and "english" in text.lower()) if lang == "en" else True
+        record(f"STT {engine.name} [{lang}]", ok, f"{text!r} in {time.perf_counter() - started:.2f}s")
 
     audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
     lang, conf, _ = await asyncio.to_thread(get_identifier().classify, audio)
     record("Spoken language ID", lang == "en", f"{lang} ({conf:.2f})")
 
 
-async def check_indic(pcm: bytes):
+async def check_remote_tts():
     s = get_settings()
-    if s.indic_asr_url:
-        from app.stt.indic_zipformer import IndicZipformerEngine
+    if not any(spec.startswith("indic_parler:") for spec in s.tts.values()):
+        return
+    import httpx
 
-        try:
-            text = await IndicZipformerEngine(s.indic_asr_url, ["en"]).transcribe(pcm, "en")
-            record("Indic ASR server", bool(text), f"{s.indic_asr_url}: {text!r}")
-        except Exception as e:
-            record("Indic ASR server", False, f"{s.indic_asr_url}: {e}")
-    if s.indic_tts_url:
-        import httpx
-
-        try:
-            async with httpx.AsyncClient(timeout=10) as c:
-                health = (await c.get(f"{s.indic_tts_url.rstrip('/')}/health")).json()
-            record("Indic TTS server", health.get("status") == "ok", f"{s.indic_tts_url}: {health}")
-        except Exception as e:
-            record("Indic TTS server", False, f"{s.indic_tts_url}: {e}")
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            health = (await c.get(f"{s.indic_tts_url.rstrip('/')}/health")).json()
+        record("Indic Parler TTS server", health.get("status") == "ok", f"{s.indic_tts_url}: {health}")
+    except Exception as e:
+        record("Indic Parler TTS server", False, f"{s.indic_tts_url}: {e}")
 
 
 def check_gpu():
@@ -119,22 +119,21 @@ def check_gpu():
 
 async def main(models_only: bool):
     s = get_settings()
-    print(f"INFO  LLM={s.llm_base_url} model={s.llm_model} stt_backend={s.stt_backend}")
+    print(f"INFO  LLM={s.llm_base_url} model={s.llm_model} STT={s.stt} TTS={s.tts}")
 
     started = time.perf_counter()
     pcm = await asyncio.to_thread(speech_16k, "Please translate this document into English.")
     record("Kokoro TTS", len(pcm) > 16000, f"{len(pcm) / 32000:.1f}s of speech in {time.perf_counter() - started:.1f}s")
 
-    if models_only:
-        from pipecat.services.moonshine.stt import MoonshineSTTService
-
-        await check_stt_lid(pcm)
-        MoonshineSTTService()  # downloads the CPU fallback model
-        record("Moonshine fallback", True, "downloaded")
-    else:
+    if not models_only:
         await check_llm()
-        await check_stt_lid(pcm)
-        await check_indic(pcm)
+    await check_stt_lid(pcm)
+    if s.stt_fallback:
+        from app.stt.providers import FALLBACKS
+
+        FALLBACKS[s.stt_fallback]()  # downloads the fallback model
+        record(f"STT fallback ({s.stt_fallback})", True, "loaded")
+    await check_remote_tts()
     check_gpu()
 
     failed = [name for name, ok, _ in RESULTS if not ok]

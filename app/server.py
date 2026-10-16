@@ -25,19 +25,10 @@ from app.config import ROOT, get_settings
 from app.documents.store import get_store
 from app.lid.speech_lid import get_identifier
 from app.llm.client import LLMUnavailable, get_llm
-from app.stt.parakeet import try_get_backend
+from app.stt import providers as stt_providers
+from app.tts import providers as tts_providers
 
 _sessions: set[asyncio.Task] = set()
-
-
-def _prefetch_session_models():
-    """Download per-session model files now, so the first caller doesn't wait for them."""
-    from pipecat.services.kokoro.tts import KOKORO_CACHE_DIR, _ensure_model_files
-    from pipecat.services.moonshine.stt import MoonshineSTTService
-
-    _ensure_model_files(KOKORO_CACHE_DIR / "kokoro-v1.0.onnx", KOKORO_CACHE_DIR / "voices-v1.0.bin")
-    if get_settings().stt_moonshine_fallback:
-        MoonshineSTTService()  # constructing it downloads and caches the model
 
 
 @asynccontextmanager
@@ -46,8 +37,8 @@ async def lifespan(app: FastAPI):
     logger.info("warming up models (first run downloads them)…")
     await asyncio.gather(
         asyncio.to_thread(get_identifier),
-        asyncio.to_thread(try_get_backend),
-        asyncio.to_thread(_prefetch_session_models),
+        asyncio.to_thread(stt_providers.warm_up),
+        asyncio.to_thread(tts_providers.warm_up),
     )
     s = get_settings()
     logger.info(f"LLM endpoint: {s.llm_base_url} model={s.llm_model}")

@@ -135,7 +135,7 @@ class DocumentAssistant(FrameProcessor):
         if not judged:
             return None
         best = max(judged, key=lambda f: f.duration_secs)
-        if best.language in self._settings.speech_languages:
+        if best.language in self._settings.stt:  # a language with an STT engine
             return None
         if best.confidence >= self._settings.lid_reject_confidence:
             return best.language

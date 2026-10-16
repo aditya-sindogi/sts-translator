@@ -1,5 +1,7 @@
 """A Pipecat STT service that routes each utterance to an engine by spoken language.
 
+Routes come from ``STS_STT`` via ``app/stt/providers.py``.
+
 The ``LanguageIDProcessor`` upstream pushes a ``LanguageDetectedFrame`` just before the
 VAD stop frame, so by the time ``SegmentedSTTService`` hands us the segment we know which
 language it is in. English goes to Parakeet; with the Indic ASR server enabled, Hindi and
@@ -30,25 +32,22 @@ class RoutedSTTService(SegmentedSTTService):
     def __init__(
         self,
         *,
-        engines: list[STTEngine],
-        default_language: str = "en",
+        routes: dict[str, STTEngine],
+        default_language: str | None = None,
         min_lid_confidence: float = 0.5,
         **kwargs,
     ):
-        self._routes: dict[str, STTEngine] = {}
-        for engine in engines:  # first engine listed for a language wins
-            for lang in engine.languages:
-                self._routes.setdefault(lang, engine)
-        if default_language not in self._routes:
-            raise ValueError(f"no STT engine for default language {default_language!r}")
-        self._default = default_language
+        if not routes:
+            raise ValueError("RoutedSTTService needs at least one language -> engine route")
+        self._routes = dict(routes)
+        self._default = default_language or ("en" if "en" in routes else next(iter(routes)))
         self._min_confidence = min_lid_confidence
-        self._segment_language = default_language
+        self._segment_language = self._default
         super().__init__(
             sample_rate=SAMPLE_RATE,
             settings=STTSettings(
-                model="+".join(sorted({e.name for e in engines})),
-                language=Language(default_language),
+                model="+".join(sorted({e.name for e in routes.values()})),
+                language=Language(self._default),
             ),
             ttfs_p99_latency=0.3,  # Parakeet on M4 Pro ~0.07 s; re-measure per deployment
             **kwargs,

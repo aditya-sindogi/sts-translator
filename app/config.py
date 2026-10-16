@@ -32,36 +32,31 @@ class Settings(BaseSettings):
     # Gemma 4 "thinks" by default on Ollama, which costs ~10x tokens and latency here.
     llm_extra_body: dict = {"reasoning_effort": "none"}
 
-    # --- STT ---
-    # "auto" picks "mlx" on Apple Silicon and "nemo" elsewhere.
-    stt_backend: str = "auto"
+    # --- STT: which engine transcribes each spoken language ---
+    # Language (ISO 639-1) -> engine name from app/stt/providers.py. Only these languages
+    # are accepted as spoken commands. e.g. {"en": "parakeet", "hi": "indic_zipformer"}
+    stt: dict[str, str] = {"en": "parakeet"}
+    # Pipecat built-in STT used if the main one fails ("moonshine", CPU) or "" for none.
+    stt_fallback: str = "moonshine"
+    # Engine settings
+    parakeet_backend: str = "auto"  # "mlx" (Apple Silicon), "nemo" (NVIDIA GPU), or "auto"
     parakeet_mlx_model: str = "mlx-community/parakeet-tdt-0.6b-v2"
     parakeet_nemo_model: str = "nvidia/parakeet-tdt-0.6b-v2"
-    stt_moonshine_fallback: bool = True
-    # Team's k2-sherpa Zipformer ASR server (12 Indic languages). Empty = disabled.
-    # e.g. ws://52.6.34.53:6000. Languages listed here are routed to it; English stays on
-    # Parakeet (measured more accurate on our English commands).
-    indic_asr_url: str = ""
-    indic_asr_languages: list[str] = ["hi"]
+    indic_asr_url: str = "ws://52.6.34.53:6000"  # team's Zipformer server (12 Indic languages)
 
     # --- Spoken language ID ---
     lid_model: str = "speechbrain/lang-id-voxlingua107-ecapa"
     lid_min_speech_secs: float = 1.0
-    # A turn is rejected only when LID is at least this confident it is NOT a supported language.
+    # A turn is rejected only when LID is at least this confident it is a language with no STT engine.
     lid_reject_confidence: float = 0.70
-    # Spoken languages accepted as commands (LID gate). Add "hi" once indic_asr_url is set.
-    speech_languages: list[str] = ["en"]
     # Document and translation-target languages.
     supported_languages: list[str] = ["en"]
 
-    # --- TTS ---
-    kokoro_voice: str = "af_heart"
-    # Team's Indic Parler-TTS server. Empty = disabled. e.g. http://52.6.34.53:6001
-    indic_tts_url: str = ""
-    # Language of the spoken text -> Parler voice key. Used for languages Kokoro lacks (ur)
-    # or does poorly; set tts_english_provider="indic_parler" to also use it for English.
-    indic_tts_voices: dict[str, str] = {"hi": "hindi_rohit", "ur": "urdu_divya", "en": "english_mary"}
-    tts_english_provider: str = "kokoro"  # "kokoro" | "indic_parler"
+    # --- TTS: which provider and voice speaks each language ---
+    # Language of the text -> "provider:voice", providers from app/tts/providers.py.
+    # e.g. {"en": "kokoro:af_heart", "hi": "kokoro:hf_alpha", "ur": "indic_parler:urdu_divya"}
+    tts: dict[str, str] = {"en": "kokoro:af_heart"}
+    indic_tts_url: str = "http://52.6.34.53:6001"  # team's Indic Parler-TTS server
 
     # --- Documents ---
     max_pdf_mb: int = 20

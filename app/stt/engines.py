@@ -2,6 +2,7 @@
 
 Engines know nothing about Pipecat. ``RoutedSTTService`` wraps them as one Pipecat
 service and picks an engine per utterance from the detected spoken language.
+Register new engines in ``app/stt/providers.py``.
 """
 
 import asyncio

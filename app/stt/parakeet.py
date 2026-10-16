@@ -72,7 +72,7 @@ class NeMoParakeetBackend(ParakeetBackend):
 def get_backend() -> ParakeetBackend:
     """Load the model once per process; all sessions share it."""
     s = get_settings()
-    backend = s.stt_backend
+    backend = s.parakeet_backend
     if backend == "auto":
         backend = "mlx" if platform.system() == "Darwin" and platform.machine() == "arm64" else "nemo"
     logger.info(f"loading Parakeet backend={backend}")
@@ -80,7 +80,7 @@ def get_backend() -> ParakeetBackend:
         return MLXParakeetBackend(s.parakeet_mlx_model)
     if backend == "nemo":
         return NeMoParakeetBackend(s.parakeet_nemo_model)
-    raise ValueError(f"unknown stt_backend {backend!r}")
+    raise ValueError(f"unknown parakeet_backend {backend!r}")
 
 
 @lru_cache
