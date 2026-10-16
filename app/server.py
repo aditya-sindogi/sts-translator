@@ -35,11 +35,10 @@ _sessions: set[asyncio.Task] = set()
 async def lifespan(app: FastAPI):
     # Load shared models once, before the first call, so the first user isn't the warm-up.
     logger.info("warming up models (first run downloads them)…")
-    await asyncio.gather(
-        asyncio.to_thread(get_identifier),
-        asyncio.to_thread(stt_providers.warm_up),
-        asyncio.to_thread(tts_providers.warm_up),
-    )
+    # One after another: model libraries (Transformers in particular) aren't safe to import
+    # and initialise from several threads at once.
+    for warm_up in (get_identifier, stt_providers.warm_up, tts_providers.warm_up):
+        await asyncio.to_thread(warm_up)
     s = get_settings()
     logger.info(f"LLM endpoint: {s.llm_base_url} model={s.llm_model}")
     try:

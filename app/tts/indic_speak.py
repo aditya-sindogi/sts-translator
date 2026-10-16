@@ -31,6 +31,11 @@ import numpy as np
 import torch
 from loguru import logger
 
+# Resolve Transformers' lazily loaded classes now, on the importing (main) thread. The
+# model's bundled inference.py imports them later from a worker thread, and a lazy import
+# racing with another thread fails with "cannot import name 'AutoModelForCausalLM'".
+from transformers import AutoModelForCausalLM, AutoTokenizer, StaticCache  # noqa: F401
+
 from pipecat.frames.frames import ErrorFrame, Frame, TTSAudioRawFrame
 from pipecat.services.settings import TTSSettings
 from pipecat.services.tts_service import TTSService
@@ -75,8 +80,6 @@ class IndicSpeakStreamer:
         self._static = self._tts.device == "cuda"  # static cache + compile only pays off on CUDA
         self._cache = None
         if self._static:
-            from transformers import StaticCache
-
             self._cache = StaticCache(config=self._tts.lm.config, max_cache_len=CACHE_LEN)
         self.tokens_per_sec = 60.0  # running estimate, refined after every sentence
         logger.info(f"loaded {repo} on {self._tts.device} (static cache: {self._static})")
