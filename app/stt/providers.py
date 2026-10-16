@@ -5,6 +5,7 @@ utterance goes to the engine configured for its detected spoken language (``STS_
 
     STS_STT='{"en": "parakeet"}'                              # default
     STS_STT='{"en": "parakeet", "hi": "indic_zipformer"}'     # + Hindi via the team server
+    STS_STT='{"en": "indic_transcribe", "hi": "indic_transcribe", "ur": "indic_transcribe"}'
 
 To add a provider (e.g. Wispr, Deepgram, Whisper):
   1. Write an ``STTEngine`` subclass (see engines.py): ``async transcribe(pcm16, language) -> str``.
@@ -23,6 +24,7 @@ from pipecat.services.moonshine.stt import MoonshineSTTService
 
 from app.config import get_settings
 from app.stt.engines import ParakeetEngine, STTEngine
+from app.stt.indic_transcribe import IndicTranscribeEngine
 from app.stt.indic_zipformer import IndicZipformerEngine
 from app.stt.parakeet import try_get_backend
 from app.stt.routed import RoutedSTTService
@@ -39,10 +41,15 @@ def _indic_zipformer(languages: list[str]) -> STTEngine:
     return IndicZipformerEngine(get_settings().indic_asr_url, languages)
 
 
+def _indic_transcribe(languages: list[str]) -> STTEngine:
+    return IndicTranscribeEngine(get_settings().indic_transcribe_model, languages)
+
+
 # Engine name -> factory(languages it will serve) -> STTEngine
 ENGINES: dict[str, Callable[[list[str]], STTEngine]] = {
     "parakeet": _parakeet,
     "indic_zipformer": _indic_zipformer,
+    "indic_transcribe": _indic_transcribe,
 }
 
 # Pipecat built-in services used as a whole-service fallback if the main STT fails.

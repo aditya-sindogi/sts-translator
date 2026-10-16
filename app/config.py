@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     parakeet_mlx_model: str = "mlx-community/parakeet-tdt-0.6b-v2"
     parakeet_nemo_model: str = "nvidia/parakeet-tdt-0.6b-v2"
     indic_asr_url: str = "ws://52.6.34.53:6000"  # team's Zipformer server (12 Indic languages)
+    indic_transcribe_model: str = "bodhan-ai/indic-transcribe-core"  # gated: accept terms + hf auth login
 
     # --- Spoken language ID ---
     lid_model: str = "speechbrain/lang-id-voxlingua107-ecapa"
@@ -57,6 +58,7 @@ class Settings(BaseSettings):
     # e.g. {"en": "kokoro:af_heart", "hi": "kokoro:hf_alpha", "ur": "indic_parler:urdu_divya"}
     tts: dict[str, str] = {"en": "kokoro:af_heart"}
     indic_tts_url: str = "http://52.6.34.53:6001"  # team's Indic Parler-TTS server
+    indic_speak_model: str = "bodhan-ai/indic-speak"  # gated: accept terms + hf auth login
 
     # --- Documents ---
     max_pdf_mb: int = 20

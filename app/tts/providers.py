@@ -4,6 +4,7 @@
 
     STS_TTS='{"en": "kokoro:af_heart"}'                                       # default
     STS_TTS='{"en": "kokoro:af_heart", "hi": "kokoro:hf_alpha", "ur": "indic_parler:urdu_divya"}'
+    STS_TTS='{"en": "indic_speak:Anjali", "hi": "indic_speak:Kavya", "ur": "indic_speak:Saba"}'
 
 Before speaking, the assistant switches to the service for that text's language.
 
@@ -24,6 +25,7 @@ from pipecat.transcriptions.language import Language
 
 from app.config import get_settings
 from app.tts.indic_parler import IndicParlerTTSService
+from app.tts.indic_speak import IndicSpeakTTSService
 
 
 def _kokoro(voice: str, language: str) -> FrameProcessor:
@@ -41,10 +43,19 @@ def _indic_parler(voice: str, language: str) -> FrameProcessor:
     )
 
 
+def _indic_speak(voice: str, language: str) -> FrameProcessor:
+    return IndicSpeakTTSService(
+        repo=get_settings().indic_speak_model,
+        voice=voice,
+        stop_frame_timeout_s=20.0,  # whole-sentence synthesis; no audio until it finishes
+    )
+
+
 # Provider name -> factory(voice, language) -> Pipecat TTS service
 PROVIDERS: dict[str, Callable[[str, str], FrameProcessor]] = {
     "kokoro": _kokoro,
     "indic_parler": _indic_parler,
+    "indic_speak": _indic_speak,
 }
 
 TTSSelector = Callable[[str], FrameProcessor | None]
@@ -78,6 +89,11 @@ def build_tts_service() -> tuple[FrameProcessor, TTSSelector]:
 
 
 def warm_up() -> None:
-    """Download model files for local providers before the first caller arrives."""
-    if any(spec.startswith("kokoro:") for spec in get_settings().tts.values()):
+    """Download/load models for local providers before the first caller arrives."""
+    specs = get_settings().tts.values()
+    if any(spec.startswith("kokoro:") for spec in specs):
         _ensure_model_files(KOKORO_CACHE_DIR / "kokoro-v1.0.onnx", KOKORO_CACHE_DIR / "voices-v1.0.bin")
+    if any(spec.startswith("indic_speak:") for spec in specs):
+        from app.tts.indic_speak import load
+
+        load(get_settings().indic_speak_model)
