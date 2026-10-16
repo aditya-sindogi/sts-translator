@@ -3,7 +3,10 @@
 It collects the user's transcript for a turn, gates on the detected spoken language,
 parses the command, runs the translation job in the background, and emits two outputs:
 - text to the client as RTVI ``server-message`` frames (over the WebRTC data channel)
-- speech, by pushing ``TTSSpeakFrame`` downstream to Kokoro.
+- speech, by pushing ``TTSSpeakFrame`` downstream to the TTS service.
+
+It replies in the language the user spoke (from the STT transcript), when that language
+has messages (app/session/messages.py) and a voice in STS_TTS; otherwise in English.
 """
 
 import asyncio
@@ -26,13 +29,14 @@ from pipecat.processors.frameworks.rtvi import RTVIServerMessageFrame
 
 from app.commands.parser import Command, Intent, parse_command
 from app.config import get_settings
-from app.documents.language import language_name
 from app.documents.models import Document, DocumentStatus
 from app.lid.speech_lid import LanguageDetectedFrame
+from app.session.messages import MESSAGES, name_of, options, say
 from app.translation.service import TranslationService
 
 _MAX_CLARIFICATIONS = 2
-_SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+")
+# Sentence ends: Latin . ! ?, Devanagari danda । and Urdu full stop ۔ / question mark ؟
+_SENTENCE_END_RE = re.compile(r"(?<=[.!?\u0964\u06d4\u061f])\s+")
 
 
 class DocumentAssistant(FrameProcessor):
@@ -55,11 +59,13 @@ class DocumentAssistant(FrameProcessor):
         self._translator = TranslationService()
 
         self._turn_text: list[str] = []
+        self._turn_spoken: list[str] = []  # language of each transcript in this turn
         self._turn_languages: list[LanguageDetectedFrame] = []
         self._turn_ended = False
         self._clarifications = 0
         self._job: asyncio.Task | None = None
-        self._last_summary: str | None = None
+        self._last_summary: tuple[str, str] | None = None  # (text, language)
+        self._lang = "en"  # reply language for the current turn
 
     # ------------------------------------------------------------------ frames
 
@@ -72,6 +78,8 @@ class DocumentAssistant(FrameProcessor):
             return  # consumed
         if isinstance(frame, TranscriptionFrame):
             self._turn_text.append(frame.text)
+            if frame.language:
+                self._turn_spoken.append(str(frame.language.value if hasattr(frame.language, "value") else frame.language))
             if self._turn_ended:  # transcript arrived after the turn already ended
                 await self._finish_turn()
             return  # consumed: never forward user text to TTS
@@ -86,24 +94,27 @@ class DocumentAssistant(FrameProcessor):
 
     async def _finish_turn(self):
         text = " ".join(t.strip() for t in self._turn_text if t.strip())
-        languages = self._turn_languages
-        self._turn_text, self._turn_languages, self._turn_ended = [], [], False
+        languages, spoken = self._turn_languages, self._turn_spoken
+        self._turn_text, self._turn_languages, self._turn_spoken, self._turn_ended = [], [], [], False
         if text:
             # Command handling may call the LLM; never block the frame loop on it.
-            self.create_task(self._handle_turn(text, languages), name="handle_turn")
+            self.create_task(self._handle_turn(text, languages, spoken), name="handle_turn")
 
     # ------------------------------------------------------------------ turn logic
 
-    async def _handle_turn(self, text: str, languages: list[LanguageDetectedFrame]):
+    async def _handle_turn(self, text: str, languages: list[LanguageDetectedFrame], spoken: list[str]):
         started = time.perf_counter()
         if rejected := self._rejected_language(languages):
-            name = language_name(rejected)
+            self._lang = "en"  # we can't speak an unsupported language, so explain in English
+            understood = options(list(self._settings.stt), "en")
             await self._reply(
-                f"I heard {name}. Right now I only understand English. Please say your command in English.",
+                f"I heard {name_of(rejected, 'en')}. Right now I understand {understood}. "
+                "Please say your command in one of those.",
                 kind="language_rejected",
                 detected=rejected,
             )
             return
+        self._lang = reply_language(spoken[-1] if spoken else "en", self._settings.tts)
 
         command = await parse_command(text)
         logger.info(f"command {command} from {text!r} in {time.perf_counter() - started:.2f}s")
@@ -113,17 +124,19 @@ class DocumentAssistant(FrameProcessor):
             case Intent.STOP:
                 await self._stop_job()
             case Intent.REPEAT_SUMMARY:
-                await self._reply(self._last_summary or "There is nothing to repeat yet.", kind="repeat")
+                if self._last_summary:
+                    summary, language = self._last_summary
+                    await self._send("assistant", summary, kind="repeat")
+                    await self._speak(summary, language)
+                else:
+                    await self._say("nothing_to_repeat", kind="repeat")
             case Intent.HELP:
-                await self._reply(
-                    "Upload a PDF, then say something like: translate this document into English.", kind="help"
-                )
+                await self._say("help", kind="help")
             case Intent.TRANSLATE:
                 await self._handle_translate(command)
             case _:
-                await self._clarify(
-                    "Sorry, I didn't catch a command. You can say: translate this document into English."
-                )
+                self._clarifications += 1
+                await self._say("unclear", kind="clarify")
 
     def _rejected_language(self, languages: list[LanguageDetectedFrame]) -> str | None:
         """Reject only when LID is confident the turn is in an unsupported language.
@@ -143,60 +156,57 @@ class DocumentAssistant(FrameProcessor):
 
     async def _handle_translate(self, command: Command):
         supported = self._settings.supported_languages
+        choices = options(supported, self._lang)
         target = command.target_language
         if not target:
             if self._clarifications >= _MAX_CLARIFICATIONS:
-                target = supported[0]  # stop asking; use the only/primary option and say so
+                target = supported[0]  # stop asking; use the primary option
             else:
-                await self._clarify("Which language should I translate the document into? Right now I support English.")
+                self._clarifications += 1
+                await self._say("ask_target", kind="clarify", options=choices)
                 return
         if target not in supported:
-            await self._reply(
-                f"I can't translate into {language_name(target)} yet. Only English output is available right now.",
-                kind="target_unsupported",
+            await self._say(
+                "target_unsupported", kind="target_unsupported", target=name_of(target, self._lang), options=choices
             )
             return
         self._clarifications = 0
 
         doc = self._get_document(self._session_id)
         if doc is None:
-            await self._reply("Please upload a PDF first, then ask me again.", kind="no_document")
+            await self._say("no_document", kind="no_document")
             return
         if doc.status == DocumentStatus.PROCESSING:
-            await self._reply("Your PDF is still being processed. Please ask again in a moment.", kind="doc_processing")
+            await self._say("doc_processing", kind="doc_processing")
             return
         if doc.status == DocumentStatus.REJECTED:
-            await self._reply(f"I couldn't use that PDF. {doc.error}", kind="doc_rejected")
+            await self._say("doc_rejected", kind="doc_rejected", reason=doc.error or "")
             return
         if self._job and not self._job.done():
-            await self._reply("I'm already translating. Say stop to cancel.", kind="busy")
+            await self._say("busy", kind="busy")
             return
 
         estimate = max(5, int(doc.char_count / 1000 * 1.5))  # rough, tuned on the pilot GPU
-        await self._reply(
-            f"Translating your {doc.page_count}-page document into {language_name(target)}. "
-            f"This may take about {estimate} seconds.",
-            kind="ack",
-        )
-        self._job = self.create_task(self._run_job(doc, target), name="translation_job")
+        await self._say("ack", kind="ack", pages=doc.page_count, target=name_of(target, self._lang), secs=estimate)
+        self._job = self.create_task(self._run_job(doc, target, self._lang), name="translation_job")
 
-    async def _run_job(self, doc: Document, target: str):
+    async def _run_job(self, doc: Document, target: str, reply_lang: str):
         async def on_progress(done: int, total: int):
             await self._send("progress", None, done=done, total=total)
 
         try:
-            result = await self._translator.translate_document(doc, target, on_progress)
+            result = await self._translator.translate_document(doc, target, on_progress, summary_language=reply_lang)
         except asyncio.CancelledError:
             await self._send("cancelled", None)
             raise
         except Exception as e:
             logger.exception("translation job failed")
-            await self._reply("Sorry, the translation failed. Please try again.", kind="error", error=str(e))
+            await self._say("error", kind="error", language=reply_lang, error=str(e))
             return
 
         payload = result.to_dict()
         self._save_result(payload)
-        self._last_summary = result.summary_text
+        self._last_summary = (result.summary_text, reply_lang)
         # Text output: summary + metadata inline; the full text is fetched over HTTP
         # because data channel messages have size limits.
         meta = {k: v for k, v in payload.items() if k != "translated_text"}
@@ -209,25 +219,28 @@ class DocumentAssistant(FrameProcessor):
             truncated=len(preview) < len(result.translated_text),
             result_url=f"/api/results/{result.request_id}",
         )
-        await self._speak(result.summary_text)
+        await self._speak(result.summary_text, reply_lang)
 
     async def _stop_job(self):
         if self._job and not self._job.done():
             await self.cancel_task(self._job)
             self._job = None
-            await self._reply("Stopped.", kind="stopped")
+            await self._say("stopped", kind="stopped")
         else:
-            await self._reply("There's nothing to stop.", kind="stopped")
-
-    async def _clarify(self, question: str):
-        self._clarifications += 1
-        await self._reply(question, kind="clarify")
+            await self._say("nothing_to_stop", kind="stopped")
 
     # ------------------------------------------------------------------ outputs
 
-    async def _reply(self, text: str, *, kind: str, **extra):
-        await self._send("assistant", text, kind=kind, **extra)
-        await self._speak(text)
+    async def _say(self, key: str, *, kind: str, language: str | None = None, error: str | None = None, **values):
+        """Say message ``key`` in the reply language (text to the page + speech)."""
+        language = language or self._lang
+        extra = {"error": error} if error else {}
+        await self._reply(say(key, language, **values), kind=kind, language=language, **extra)
+
+    async def _reply(self, text: str, *, kind: str, language: str | None = None, **extra):
+        language = language or self._lang
+        await self._send("assistant", text, kind=kind, language=language, **extra)
+        await self._speak(text, language)
 
     async def _speak(self, text: str, language: str = "en"):
         """Speak ``text`` (written in ``language``) with the TTS service for that language."""
@@ -243,3 +256,8 @@ class DocumentAssistant(FrameProcessor):
 
     async def _send(self, type_: str, text: str | None, **data):
         await self.push_frame(RTVIServerMessageFrame(data={"type": type_, "text": text, **data}))
+
+
+def reply_language(spoken: str, tts: dict[str, str]) -> str:
+    """Reply in the spoken language if we have messages and a voice for it, else English."""
+    return spoken if spoken in MESSAGES and spoken in tts else "en"

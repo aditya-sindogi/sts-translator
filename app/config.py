@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     # A turn is rejected only when LID is at least this confident it is a language with no STT engine.
     lid_reject_confidence: float = 0.70
     # Document and translation-target languages.
-    supported_languages: list[str] = ["en"]
+    supported_languages: list[str] = ["en", "hi", "ur", "bho"]
 
     # --- TTS: which provider and voice speaks each language ---
     # Language of the text -> "provider:voice", providers from app/tts/providers.py.

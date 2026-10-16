@@ -45,3 +45,20 @@ def test_normalize_language():
     assert normalize_language("ur") == "ur"
     assert normalize_language("Klingon") is None
     assert normalize_language(None) is None
+
+
+def test_rules_parse_hindi_and_urdu_commands():
+    assert parse_with_rules("कृपया इस दस्तावेज का अंग्रेजी में अनुवाद कीजिये").target_language == "en"
+    assert parse_with_rules("इसका हिंदी में अनुवाद करो").target_language == "hi"
+    assert parse_with_rules("translate this into Bhojpuri").target_language == "bho"
+    assert parse_with_rules("اس دستاویز کا اردو میں ترجمہ کریں").target_language == "ur"
+    assert parse_with_rules("इसका भोजपुरी में अनुवाद करो").target_language == "bho"
+
+
+def test_fidelity_accepts_numbers_in_other_digit_systems():
+    src = "Interviews start on 15 July 2026; budget Rs 25,000."
+    devanagari = "साक्षात्कार १५ जुलाई २०२६ को शुरू होंगे; बजट रु २५,००० है।"
+    urdu = "انٹرویو ۱۵ جولائی ۲۰۲۶ کو شروع ہوں گے؛ بجٹ ۲۵٬۰۰۰ روپے۔"
+    assert check_chunk(src, devanagari, same_language=False, min_chrf=0.8) == []
+    assert check_chunk(src, urdu, same_language=False, min_chrf=0.8) == []
+    assert any("numbers missing" in p for p in check_chunk(src, "साक्षात्कार जुलाई में", same_language=False, min_chrf=0.8))

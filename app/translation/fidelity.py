@@ -1,6 +1,7 @@
 """Cheap, model-free checks that a translated chunk did not drop or invent content."""
 
 import re
+import unicodedata
 from collections import Counter
 
 _NUM_RE = re.compile(r"\d+(?:[.,]\d+)*")
@@ -31,8 +32,14 @@ def chrf(hypothesis: str, reference: str, *, max_n: int = 6, beta: float = 2.0) 
     return (1 + b2) * p * r / (b2 * p + r)
 
 
+def _ascii_digits(number: str) -> str:
+    """'४२' (Devanagari) or '۴۲' (Urdu) -> '42', so a translation may switch digit systems."""
+    return "".join(str(unicodedata.decimal(c)) if c.isdigit() else c for c in number)
+
+
 def numbers(text: str) -> Counter[str]:
-    return Counter(m.replace(",", "") for m in _NUM_RE.findall(text))
+    text = text.replace("\u066b", ".").replace("\u066c", ",")  # Arabic decimal / thousands separators
+    return Counter(_ascii_digits(m).replace(",", "") for m in _NUM_RE.findall(text))
 
 
 def check_chunk(source: str, output: str, *, same_language: bool, min_chrf: float) -> list[str]:

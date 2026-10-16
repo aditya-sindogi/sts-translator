@@ -35,6 +35,19 @@ LANGUAGE_NAMES = {
     "english": "en",
     "hindi": "hi",
     "urdu": "ur",
+    "bhojpuri": "bho",
+    "awadhi": "awa",
+    # Devanagari
+    "अंग्रेज़ी": "en", "अंग्रेजी": "en", "इंग्लिश": "en",
+    "हिंदी": "hi", "हिन्दी": "hi",
+    "उर्दू": "ur",
+    "भोजपुरी": "bho",
+    "अवधी": "awa",
+    # Urdu script
+    "انگریزی": "en", "انگلش": "en",
+    "ہندی": "hi",
+    "اردو": "ur",
+    "بھوجپوری": "bho",
     "spanish": "es",
     "french": "fr",
     "german": "de",
@@ -49,8 +62,10 @@ LANGUAGE_NAMES = {
 
 _STOP_RE = re.compile(r"^\W*(stop|cancel|abort|never ?mind|quit)\b", re.IGNORECASE)
 _REPEAT_RE = re.compile(r"\b(repeat|say (that|it) again|again please|what did you say)\b", re.IGNORECASE)
-_TRANSLATE_RE = re.compile(r"\btranslat\w*\b", re.IGNORECASE)
+_TRANSLATE_RE = re.compile(r"\btranslat\w*\b|अनुवाद|ترجمہ|ट्रांसलेट", re.IGNORECASE)
 _TARGET_RE = re.compile(r"\b(?:in|into|to)\s+([a-z]+)\b", re.IGNORECASE)
+# Hindi/Urdu put the language before the postposition: "हिंदी में", "اردو میں"
+_TARGET_NATIVE_RE = re.compile(r"(\S+)\s+(?:में|मे|میں)(?:\s|$|[।۔.,])")
 
 
 def normalize_language(value: str | None) -> str | None:
@@ -68,7 +83,7 @@ def parse_with_rules(text: str) -> Command | None:
     if _REPEAT_RE.search(text):
         return Command(Intent.REPEAT_SUMMARY)
     if _TRANSLATE_RE.search(text):
-        for match in _TARGET_RE.finditer(text):
+        for match in [*_TARGET_RE.finditer(text), *_TARGET_NATIVE_RE.finditer(text)]:
             lang = normalize_language(match.group(1))
             if lang:
                 return Command(Intent.TRANSLATE, lang)

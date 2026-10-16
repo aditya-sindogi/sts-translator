@@ -27,13 +27,37 @@ Reproduce it faithfully in {target_name}. Rules:
 Output only the text, with no preface."""
 
 TRANSLATE_SYSTEM = """You are a precise document translator. Translate the text from {source_name} into {target_name}.
+{target_note}
 Rules:
+- Translate every line, including titles, headings and section labels.
 - Preserve meaning, paragraph breaks and order.
-- Keep numbers, dates, currencies, names and codes exactly as written.
+- Write place and country names with their standard name in the target language; never substitute a different place.
+- Keep numbers, dates, currencies, person and company names, and codes exactly as written.
 - Do not summarize, explain, add or omit anything.
 Output only the translation, with no preface."""
 
-GIST_SYSTEM = """Summarize what the document is about in one or two plain sentences (at most {max_words} words), suitable to be spoken aloud.
-Mention only topics that appear in the text. No lists, no markdown, no preface."""
+GIST_SYSTEM = """Summarize what the document is about in one or two plain sentences (at most {max_words} words), written in {language}, suitable to be spoken aloud.
+Mention only topics that appear in the text. Write numbers as words. No lists, no markdown, no preface."""
 
 CHUNK_GIST_SYSTEM = """In one short sentence, state the main topic of this excerpt. Use only information in the text. No preface."""
+
+# How to write each target language (script and variety). Empty for languages that need no note.
+TARGET_NOTES = {
+    "hi": "Write standard Hindi in Devanagari script (India → भारत, United States → संयुक्त राज्य अमेरिका). Keep common English technical terms (VPN, IT, PDF) as they are.",
+    "ur": "Write Urdu in the Perso-Arabic (Nastaliq) script, not Devanagari (India → بھارت, United States → امریکہ, Singapore → سنگاپور). Keep common English technical terms (VPN, IT, PDF) in Latin letters.",
+    "bho": "Write Bhojpuri, not Hindi: use Bhojpuri grammar and vocabulary (for example बा/बाड़े/रहल, हमनी, ओकरा) in Devanagari script (India → भारत, United States → अमेरिका).",
+}
+
+# Re-translates lines a chunk translation left in the source language (often short headings).
+REPAIR_LINES_SYSTEM = """Translate each line in the JSON list from {source_name} into {target_name}.
+{target_note}
+These lines were left untranslated, usually titles or headings: translate their words.
+Only a person's or company's own name stays as written (e.g. "Northwind Analytics"); everything else is translated.
+Keep list numbering such as "1." and numbers and dates as written.
+Return JSON {{"lines": [...]}} with exactly as many lines as given, in the same order."""
+
+REPAIR_LINES_SCHEMA = {
+    "type": "object",
+    "properties": {"lines": {"type": "array", "items": {"type": "string"}}},
+    "required": ["lines"],
+}

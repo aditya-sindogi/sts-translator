@@ -103,7 +103,11 @@ audio ─► VAD marks one utterance ─► Language ID ─► choose engine for
 
 ## 4. How speech output (TTS) works
 
-The assistant knows the language of each piece of text it speaks. Before speaking, it switches to the voice configured for that language in `STS_TTS`. It sends one sentence at a time, so audio starts sooner.
+**The bot replies in the language you spoke.** Speak Hindi and its acknowledgement and spoken summary are in Hindi, even when the document is translated into English. This needs two things for that language:
+- messages in [app/session/messages.py](app/session/messages.py) (English, Hindi and Urdu are there now)
+- a voice in `STS_TTS`
+
+If either is missing, it replies in English. Before speaking, the assistant switches to the voice configured for the reply language, and it sends one sentence at a time so audio starts sooner.
 
 | Provider | Voices (examples) | Runs where | Notes |
 |---|---|---|---|
@@ -260,7 +264,7 @@ uv run pytest
 | `STS_STT` | `{"en": "parakeet"}` | Spoken language → STT engine. These are also the languages accepted as commands |
 | `STS_STT_FALLBACK` | `moonshine` | Backup STT if the main one fails (`""` = none) |
 | `STS_TTS` | `{"en": "kokoro:af_heart"}` | Text language → `provider:voice` |
-| `STS_SUPPORTED_LANGUAGES` | `["en"]` | Languages a document can be translated into |
+| `STS_SUPPORTED_LANGUAGES` | `["en", "hi", "ur", "bho"]` | Languages a document can be in, and be translated into |
 | `STS_LLM_BASE_URL` / `STS_LLM_MODEL` | Ollama, `gemma4:12b` | Which LLM server and model |
 | `STS_PARAKEET_BACKEND` | `auto` | `mlx` (Mac), `nemo` (NVIDIA), or `auto` |
 | `STS_INDIC_ASR_URL` / `STS_INDIC_TTS_URL` | team servers | Addresses of the team's Indic ASR / TTS |
@@ -269,6 +273,6 @@ All settings are in [app/config.py](app/config.py).
 
 ## 10. Current limits
 
-- **Translation output is English only for now.** Gemma translates to Hindi well (tested), but the spoken summary is still English-only. Enabling Hindi output means setting `STS_SUPPORTED_LANGUAGES`, writing the summary in the target language, and adding a Hindi voice to `STS_TTS`.
+- **Translation targets:** English, Hindi, Urdu and Bhojpuri (`STS_SUPPORTED_LANGUAGES`). All three were tested on the sample policy PDF. Hindi and Bhojpuri read naturally. Urdu sometimes keeps country names in Latin letters. Gemma has no official Bhojpuri support, so have a native speaker review Bhojpuri output.
 - **No OCR yet:** scanned PDFs (no text layer) are rejected.
 - **Kokoro licensing:** Kokoro pulls in GPL components (espeak-ng). Review this before any commercial use.
