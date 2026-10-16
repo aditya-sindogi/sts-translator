@@ -55,6 +55,7 @@
       <button id="disconnect" disabled>Disconnect</button>
       <span id="connStatus" class="pill">disconnected</span>
       <span id="lang" class="pill" title="Spoken language detected on your last utterance">lang: –</span>
+      <span id="mic" class="pill" title="The bot doesn't listen while it is working or speaking">mic: –</span>
     </div>
     <progress id="progress" value="0" max="1" hidden></progress>
   </section>
@@ -197,6 +198,9 @@ function onServerMessage(d) {
       pill('lang', `lang: ${d.text ?? '?'} ${d.text ? Math.round(d.confidence * 100) + '%' : '(too short)'}`, d.text ? (ok ? 'ok' : 'warn') : '');
       break;
     }
+    case 'mic':
+      pill('mic', d.listening ? 'listening' : 'busy, not listening', d.listening ? 'ok' : 'warn');
+      break;
     case 'command':
       log('sys', `command: ${d.text}${d.target_language ? ' → ' + d.target_language : ''}`);
       break;

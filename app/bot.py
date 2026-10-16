@@ -23,6 +23,7 @@ from app.config import get_settings
 from app.documents.store import get_store
 from app.lid.speech_lid import LanguageIDProcessor
 from app.session.assistant import DocumentAssistant
+from app.session.mic_gate import MicGate, MicGateProcessor
 from app.stt.providers import build_stt_service
 from app.tts.providers import build_tts_service
 
@@ -36,7 +37,9 @@ async def run_bot(connection: SmallWebRTCConnection, session_id: str):
         params=TransportParams(audio_in_enabled=True, audio_out_enabled=True),
     )
     tts, tts_for_language = build_tts_service()
+    mic_gate = MicGate()  # closed while the bot is busy, so the user isn't heard
     assistant = DocumentAssistant(
+        mic_gate=mic_gate,
         session_id=session_id,
         get_document=store.latest_for_session,
         save_result=store.put_result,
@@ -46,6 +49,7 @@ async def run_bot(connection: SmallWebRTCConnection, session_id: str):
     pipeline = Pipeline(
         [
             transport.input(),  # 1. audio from the browser mic
+            MicGateProcessor(mic_gate),  # (dropped while the bot is busy)
             VADProcessor(vad_analyzer=SileroVADAnalyzer()),  # 2. when is the user speaking?
             LanguageIDProcessor(min_speech_secs=settings.lid_min_speech_secs),  # 3. which language?
             build_stt_service(),  # 4. speech -> text

@@ -89,7 +89,8 @@ audio ─► VAD marks one utterance ─► Language ID ─► choose engine for
 2. **Language ID (SpeechBrain VoxLingua107)** classifies the segment's language (107 languages, about 15 ms on CPU). It runs *before* transcription, so we know which engine to use. It only rejects a sentence when it is confident (≥ 70%) that the language has no engine configured; short or uncertain sentences are let through.
 3. **Routing** ([app/stt/routed.py](app/stt/routed.py)): `RoutedSTTService` looks up the engine for that language in `STS_STT` and sends it the audio (16 kHz, mono, 16-bit).
 4. **The engine** returns text. A failure is retried once. A second failure makes Pipecat's `ServiceSwitcher` switch to the fallback service.
-5. **Turn detection** groups the sentences into one turn. If you pause mid-command, the two halves are joined before the assistant sees them.
+5. **The bot stops listening while it works.** From the moment it takes a command until it has finished speaking its answer, microphone audio is dropped, so background talk can't interrupt it. The page shows "busy, not listening". A short unclear fragment is the exception: the bot keeps listening for the rest of the command.
+6. **Turn detection** groups the sentences into one turn. If you pause mid-command, the two halves are joined before the assistant sees them.
 
 **Available engines:**
 

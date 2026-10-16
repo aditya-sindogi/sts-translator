@@ -17,6 +17,8 @@ from collections.abc import Callable
 from loguru import logger
 
 from pipecat.frames.frames import (
+    BotStartedSpeakingFrame,
+    BotStoppedSpeakingFrame,
     Frame,
     ManuallySwitchServiceFrame,
     TranscriptionFrame,
@@ -32,6 +34,7 @@ from app.config import get_settings
 from app.documents.models import Document, DocumentStatus
 from app.lid.speech_lid import LanguageDetectedFrame
 from app.session.messages import MESSAGES, name_of, options, say
+from app.session.mic_gate import MicGate
 from app.translation.service import TranslationService
 
 _MAX_CLARIFICATIONS = 2
@@ -40,6 +43,10 @@ _MAX_CLARIFICATIONS = 2
 # speech that follows within the merge window.
 _UNCLEAR_REPLY_DELAY_SECS = 2.5
 _FRAGMENT_MERGE_SECS = 6.0
+# Reopen the mic this long after the bot goes quiet (bridges pauses between sentences),
+# and never stay deaf longer than the watchdog if speech never starts (e.g. TTS failed).
+_REOPEN_AFTER_SPEECH_SECS = 2.0
+_MIC_WATCHDOG_SECS = 30.0
 # Sentence ends: Latin . ! ?, Devanagari danda । and Urdu full stop ۔ / question mark ؟
 _SENTENCE_END_RE = re.compile(r"(?<=[.!?\u0964\u06d4\u061f])\s+")
 
@@ -52,6 +59,7 @@ class DocumentAssistant(FrameProcessor):
         get_document: Callable[[str], Document | None],
         save_result: Callable[[dict], None],
         tts_for_language: Callable[[str], FrameProcessor | None] = lambda lang: None,
+        mic_gate: MicGate | None = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -73,12 +81,19 @@ class DocumentAssistant(FrameProcessor):
         self._lang = "en"  # reply language for the current turn
         self._fragment: tuple[str, float] | None = None  # (unclear text, time) awaiting more speech
         self._unclear_reply: asyncio.Task | None = None
+        self._mic = mic_gate or MicGate()
+        self._reopen: asyncio.Task | None = None
+        self._watchdog: asyncio.Task | None = None
 
     # ------------------------------------------------------------------ frames
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
 
+        if isinstance(frame, (LanguageDetectedFrame, TranscriptionFrame)) and self._mic.closed:
+            # Speech that was already in the pipeline when we got busy: ignore it too.
+            logger.debug(f"ignored while busy: {getattr(frame, 'text', None) or frame.language}")
+            return
         if isinstance(frame, LanguageDetectedFrame):
             self._turn_languages.append(frame)
             await self._send("language", frame.language, confidence=round(frame.confidence, 3), top=frame.top)
@@ -90,12 +105,17 @@ class DocumentAssistant(FrameProcessor):
             if self._turn_ended:  # transcript arrived after the turn already ended
                 await self._finish_turn()
             return  # consumed: never forward user text to TTS
-        if isinstance(frame, UserStartedSpeakingFrame):
+        if isinstance(frame, BotStartedSpeakingFrame):
+            await self._cancel(self._reopen)
+        elif isinstance(frame, BotStoppedSpeakingFrame) and self._mic.closed and not self._job_running():
+            await self._cancel(self._reopen)
+            self._reopen = self.create_task(self._reopen_mic_later(), name="reopen_mic")
+        elif isinstance(frame, UserStartedSpeakingFrame):
             self._turn_ended = False
             await self._cancel_unclear_reply()  # they're still talking: hold the "didn't understand"
         elif isinstance(frame, UserStoppedSpeakingFrame):
-            self._turn_ended = True
-            if self._turn_text:
+            self._turn_ended = not self._mic.closed
+            if self._turn_text and not self._mic.closed:
                 await self._finish_turn()
 
         await self.push_frame(frame, direction)
@@ -103,6 +123,8 @@ class DocumentAssistant(FrameProcessor):
     async def _finish_turn(self):
         text = " ".join(t.strip() for t in self._turn_text if t.strip())
         languages, spoken = self._turn_languages, self._turn_spoken
+        if text:
+            await self._close_mic()  # busy from here until the answer has been spoken
         self._turn_text, self._turn_languages, self._turn_spoken, self._turn_ended = [], [], [], False
         if text:
             # Command handling may call the LLM; never block the frame loop on it.
@@ -210,6 +232,7 @@ class DocumentAssistant(FrameProcessor):
         except Exception as e:
             logger.exception("translation job failed")
             await self._say("error", kind="error", language=reply_lang, error=str(e))
+            await self._close_mic()
             return
 
         payload = result.to_dict()
@@ -228,6 +251,7 @@ class DocumentAssistant(FrameProcessor):
             result_url=f"/api/results/{result.request_id}",
         )
         await self._speak(result.summary_text, reply_lang)
+        await self._close_mic()  # reopens after the summary has been spoken
 
     async def _stop_job(self):
         if self._job and not self._job.done():
@@ -250,12 +274,53 @@ class DocumentAssistant(FrameProcessor):
         """Keep an unclear turn for joining, and only say "I didn't understand" if nothing follows."""
         self._fragment = (text, time.monotonic())
         self._unclear_reply = self.create_task(self._reply_unclear_later(), name="unclear_reply")
+        self._mic.closed = False  # keep listening for the rest of the command
+        self._send_mic_state()
 
     async def _reply_unclear_later(self):
         await asyncio.sleep(_UNCLEAR_REPLY_DELAY_SECS)
         self._unclear_reply = None
         self._clarifications += 1
         await self._say("unclear", kind="clarify")
+
+    # ------------------------------------------------------------------ mic gate
+
+    def _job_running(self) -> bool:
+        return self._job is not None and not self._job.done()
+
+    async def _close_mic(self):
+        if not self._mic.closed:
+            self._mic.closed = True
+            self._send_mic_state()
+        await self._cancel(self._watchdog)
+        self._watchdog = self.create_task(self._mic_watchdog(), name="mic_watchdog")
+
+    def _open_mic(self):
+        if self._mic.closed:
+            self._mic.closed = False
+            self._send_mic_state()
+
+    async def _reopen_mic_later(self):
+        await asyncio.sleep(_REOPEN_AFTER_SPEECH_SECS)
+        self._reopen = None
+        if not self._job_running():
+            self._open_mic()
+
+    async def _mic_watchdog(self):
+        """Never stay deaf forever: reopen if the bot never spoke (or a job hung)."""
+        while True:
+            await asyncio.sleep(_MIC_WATCHDOG_SECS)
+            if not self._job_running():
+                self._watchdog = None
+                self._open_mic()
+                return
+
+    def _send_mic_state(self):
+        self.create_task(self._send("mic", None, listening=not self._mic.closed), name="mic_state")
+
+    async def _cancel(self, task: asyncio.Task | None):
+        if task and not task.done():
+            await self.cancel_task(task)
 
     async def _cancel_unclear_reply(self):
         if self._unclear_reply and not self._unclear_reply.done():
