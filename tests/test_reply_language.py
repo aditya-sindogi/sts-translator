@@ -47,3 +47,21 @@ def test_sentences_split_on_devanagari_and_urdu_full_stops():
     assert len(_SENTENCE_END_RE.split("पहला वाक्य। दूसरा वाक्य।")) == 2
     assert len(_SENTENCE_END_RE.split("پہلا جملہ۔ دوسرا جملہ۔")) == 2
     assert len(_SENTENCE_END_RE.split("First. Second?")) == 2
+
+
+def test_paused_command_fragments_are_joined(monkeypatch):
+    import app.session.assistant as a
+
+    assistant = a.DocumentAssistant.__new__(a.DocumentAssistant)
+    assistant._fragment = None
+    clock = [100.0]
+    monkeypatch.setattr(a.time, "monotonic", lambda: clock[0])
+
+    assistant._fragment = ("इस डॉक्यूमेंट को", clock[0])
+    clock[0] += 3
+    assert assistant._merge_fragment("Hindi me translate karo") == "इस डॉक्यूमेंट को Hindi me translate karo"
+    assert assistant._fragment is None  # used once
+
+    assistant._fragment = ("this document", clock[0])
+    clock[0] += 10  # too late: treated as a new command
+    assert assistant._merge_fragment("stop") == "stop"

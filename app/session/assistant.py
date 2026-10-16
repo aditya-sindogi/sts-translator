@@ -35,6 +35,11 @@ from app.session.messages import MESSAGES, name_of, options, say
 from app.translation.service import TranslationService
 
 _MAX_CLARIFICATIONS = 2
+# A turn that isn't a clear command may be the first half of one ("this document..." pause
+# "...into Hindi"). Wait this long before saying "I didn't understand", and join it with
+# speech that follows within the merge window.
+_UNCLEAR_REPLY_DELAY_SECS = 2.5
+_FRAGMENT_MERGE_SECS = 6.0
 # Sentence ends: Latin . ! ?, Devanagari danda । and Urdu full stop ۔ / question mark ؟
 _SENTENCE_END_RE = re.compile(r"(?<=[.!?\u0964\u06d4\u061f])\s+")
 
@@ -66,6 +71,8 @@ class DocumentAssistant(FrameProcessor):
         self._job: asyncio.Task | None = None
         self._last_summary: tuple[str, str] | None = None  # (text, language)
         self._lang = "en"  # reply language for the current turn
+        self._fragment: tuple[str, float] | None = None  # (unclear text, time) awaiting more speech
+        self._unclear_reply: asyncio.Task | None = None
 
     # ------------------------------------------------------------------ frames
 
@@ -85,6 +92,7 @@ class DocumentAssistant(FrameProcessor):
             return  # consumed: never forward user text to TTS
         if isinstance(frame, UserStartedSpeakingFrame):
             self._turn_ended = False
+            await self._cancel_unclear_reply()  # they're still talking: hold the "didn't understand"
         elif isinstance(frame, UserStoppedSpeakingFrame):
             self._turn_ended = True
             if self._turn_text:
@@ -116,6 +124,7 @@ class DocumentAssistant(FrameProcessor):
             return
         self._lang = reply_language(spoken[-1] if spoken else "en", self._settings.tts)
 
+        text = self._merge_fragment(text)
         command = await parse_command(text)
         logger.info(f"command {command} from {text!r} in {time.perf_counter() - started:.2f}s")
         await self._send("command", command.intent.value, target_language=command.target_language, heard=text)
@@ -135,8 +144,7 @@ class DocumentAssistant(FrameProcessor):
             case Intent.TRANSLATE:
                 await self._handle_translate(command)
             case _:
-                self._clarifications += 1
-                await self._say("unclear", kind="clarify")
+                self._hold_fragment(text)
 
     def _rejected_language(self, languages: list[LanguageDetectedFrame]) -> str | None:
         """Reject only when LID is confident the turn is in an unsupported language.
@@ -228,6 +236,31 @@ class DocumentAssistant(FrameProcessor):
             await self._say("stopped", kind="stopped")
         else:
             await self._say("nothing_to_stop", kind="stopped")
+
+    # ------------------------------------------------------------------ paused commands
+
+    def _merge_fragment(self, text: str) -> str:
+        """Prepend a recent unclear fragment, so a command split by a pause is read whole."""
+        fragment, self._fragment = self._fragment, None
+        if fragment and time.monotonic() - fragment[1] <= _FRAGMENT_MERGE_SECS:
+            return f"{fragment[0]} {text}"
+        return text
+
+    def _hold_fragment(self, text: str):
+        """Keep an unclear turn for joining, and only say "I didn't understand" if nothing follows."""
+        self._fragment = (text, time.monotonic())
+        self._unclear_reply = self.create_task(self._reply_unclear_later(), name="unclear_reply")
+
+    async def _reply_unclear_later(self):
+        await asyncio.sleep(_UNCLEAR_REPLY_DELAY_SECS)
+        self._unclear_reply = None
+        self._clarifications += 1
+        await self._say("unclear", kind="clarify")
+
+    async def _cancel_unclear_reply(self):
+        if self._unclear_reply and not self._unclear_reply.done():
+            await self.cancel_task(self._unclear_reply)
+        self._unclear_reply = None
 
     # ------------------------------------------------------------------ outputs
 
